@@ -298,18 +298,14 @@ def add_room():
 def add_section():
     auth_check = check_admin_access()
     if auth_check: return auth_check
-        
     data = request.get_json()
     if not data:
         return jsonify({"message": "Invalid JSON data"}), 400
-
     section_name = data.get('section_name')
     dept_id = data.get('dept_id')
     student_count = data.get('student_count')
-
     if not all([section_name, dept_id, student_count]):
         return jsonify({"message": "All fields are required"}), 400
-
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -321,6 +317,7 @@ def add_section():
         print(f"Section Add Error: {e}")
         return jsonify({"status": "error", "message": f"DB Error: {e}"}), 500
     finally:
+        if cursor: cursor.close()
         if conn: conn.close()
 
 @app.route('/api/v1/assign_curriculum', methods=['POST'])
@@ -328,18 +325,14 @@ def add_section():
 def assign_curriculum():
     auth_check = check_admin_access()
     if auth_check: return auth_check
-        
     data = request.get_json()
     if not data:
         return jsonify({"message": "Invalid JSON data"}), 400
-
     section_id = data.get('section_id')
     subject_id = data.get('subject_id')
     faculty_id = data.get('faculty_id')
-
     if not all([section_id, subject_id, faculty_id]):
         return jsonify({"message": "All 3 IDs are required"}), 400
-
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -353,6 +346,7 @@ def assign_curriculum():
             return jsonify({"status": "error", "message": "This subject is already assigned to this section."}), 409
         return jsonify({"status": "error", "message": f"DB Error: {e}"}), 500
     finally:
+        if cursor: cursor.close()
         if conn: conn.close()
 
 # --- Dropdown GETs ---
@@ -380,9 +374,8 @@ def get_sections():
         if cursor: cursor.close()
         if conn: conn.close()
 
-
 @app.route('/api/v1/subjects', methods=['GET'])
-@jwt_required() 
+@jwt_required()
 def get_subjects():
     conn = None; cursor = None
     try:
@@ -419,7 +412,6 @@ def get_timetable_by_section(section_id):
     claims = get_jwt()
     if claims.get('role') not in ['Admin', 'Faculty', 'Student']:
         return jsonify({"msg": "Authorization failed. Role not permitted."}), 403
-
     conn = None; cursor = None
     try:
         conn = get_db_connection()
@@ -449,7 +441,7 @@ def get_timetable_by_section(section_id):
         if conn: conn.close()
 
 @app.route('/api/v1/faculty', methods=['GET'])
-@jwt_required() 
+@jwt_required()
 def get_faculty():
     conn = None; cursor = None
     try:
@@ -471,106 +463,192 @@ def get_faculty():
 @jwt_required()
 def generate_timetable():
     auth_check = check_admin_access()
-    if auth_check: 
-        return auth_check 
-        
+    if auth_check:
+        return auth_check
     conn = None
     cursor = None
-    
     try:
         conn = get_db_connection()
         if conn is None:
             return jsonify({"msg": "GA Error: Database connection failed."}), 500
-            
         cursor = conn.cursor(dictionary=True)
 
+        # ----------------------------
         # sections
+        # ----------------------------
         cursor.execute("SELECT section_id, section_name, student_count FROM sections")
         sec_rows = cursor.fetchall()
-        sections = { r['section_id']: Section(r['section_id'], r['section_name'], int(r['student_count'])) for r in sec_rows }
+        sections = {
+            r['section_id']: Section(r['section_id'], r['section_name'], int(r['student_count']))
+            for r in sec_rows
+        }
 
-        # subjects
+        # ----------------------------
+        # subjects (derive type + block if missing)
+        # ----------------------------
         cursor.execute("""
-            SELECT subject_id, lecture_count, 
-                   UPPER(COALESCE(type,'THEORY')) AS type,
-                   COALESCE(contiguous_block_size,1) AS contiguous_block_size
+            SELECT 
+                subject_id,
+                COALESCE(lecture_count, 0) AS lecture_count,
+                UPPER(COALESCE(subject_code, '')) AS s_code,
+                UPPER(COALESCE(subject_name, '')) AS s_name,
+                UPPER(COALESCE(type, '')) AS s_type,
+                COALESCE(contiguous_block_size, 0) AS csize
             FROM timetable_subject
         """)
         sub_rows = cursor.fetchall()
-        subjects = {
-            r['subject_id']: Subject(
-                subject_id = r['subject_id'],
-                lecture_count = int(r['lecture_count']),
-                subj_type = r['type'],
-                contiguous_block_size = int(r['contiguous_block_size'])
-            ) for r in sub_rows
-        }
 
-        # (Optional) LAB feasibility quick check
+        LAB_HINTS = ("LAB", "PRACTICAL", "PRAC", "PR", "WORKSHOP", "WS")
+
+        def _derive(sub):
+            if sub["s_type"] == "LAB":
+                dtype = "LAB"
+            elif sub["s_type"] == "THEORY":
+                dtype = "THEORY"
+            else:
+                text = f'{sub["s_code"]} {sub["s_name"]}'
+                if any(h in text for h in LAB_HINTS) or int(sub["csize"] or 0) >= 2:
+                    dtype = "LAB"
+                else:
+                    dtype = "THEORY"
+            csize = int(sub["csize"] or 0)
+            if csize <= 0:
+                csize = 2 if dtype == "LAB" else 1
+            return dtype, csize
+
+        subjects = {}
+        for r in sub_rows:
+            dtype, csize = _derive(r)
+            subjects[r["subject_id"]] = Subject(
+                subject_id=r["subject_id"],
+                lecture_count=int(r["lecture_count"]),
+                subj_type=dtype,
+                contiguous_block_size=int(csize)
+            )
+
+        # LAB feasibility quick check
         for s in subjects.values():
             if s.subj_type == 'LAB' and (s.lecture_count % s.contiguous_block_size != 0):
                 return jsonify({
                     "status": "error",
-                    "msg": f"Invalid LAB config for subject_id={s.subject_id}: "
-                           f"lecture_count ({s.lecture_count}) must be multiple of contiguous_block_size ({s.contiguous_block_size})."
+                    "msg": (
+                        f"Invalid LAB config for subject_id={s.subject_id}: "
+                        f"lecture_count ({s.lecture_count}) must be multiple of "
+                        f"contiguous_block_size ({s.contiguous_block_size})."
+                    )
                 }), 400
 
+        # ----------------------------
         # rooms
-        cursor.execute("SELECT room_id, UPPER(room_type) AS room_type, capacity FROM rooms_classroom WHERE is_available = 1")
+        # ----------------------------
+        cursor.execute("""
+            SELECT room_id, UPPER(room_type) AS room_type, capacity
+            FROM rooms_classroom
+            WHERE is_available = 1
+        """)
         room_rows = cursor.fetchall()
-        def _norm_room(rt: str) -> str:
-            if not rt: return 'LECTURE'
-            u = rt.upper()
-            if 'LAB' in u: return 'LAB'
-            return 'LECTURE'
-        rooms = { r['room_id']: Room(r['room_id'], _norm_room(r['room_type']), int(r['capacity'])) for r in room_rows }
 
+        def _norm_room(rt: str) -> str:
+            if not rt:
+                return 'LECTURE'
+            u = rt.upper()
+            return 'LAB' if 'LAB' in u else 'LECTURE'
+
+        rooms = {
+            r['room_id']: Room(r['room_id'], _norm_room(r['room_type']), int(r['capacity']))
+            for r in room_rows
+        }
+
+        # ----------------------------
         # faculty
+        # ----------------------------
         cursor.execute("SELECT faculty_id, COALESCE(max_load,16) AS max_load FROM faculty_faculty")
         f_rows = cursor.fetchall()
-        faculty = { r['faculty_id']: Faculty(r['faculty_id'], int(r['max_load'])) for r in f_rows }
+        faculty = {r['faculty_id']: Faculty(r['faculty_id'], int(r['max_load'])) for r in f_rows}
 
+        # ----------------------------
         # curriculum
+        # ----------------------------
         cursor.execute("SELECT section_id, subject_id, faculty_id FROM curriculum")
-        curriculum = [ (int(r['section_id']), int(r['subject_id']), int(r['faculty_id'])) for r in cursor.fetchall() ]
+        curriculum = [
+            (int(r['section_id']), int(r['subject_id']), int(r['faculty_id']))
+            for r in cursor.fetchall()
+        ]
 
-        # timeslots
+        # ----------------------------
+        # timeslots (ordered + usable)
+        # ----------------------------
+        cursor.execute("""
+            SELECT slot_id, day_of_week,
+                   TIME_FORMAT(start_time,'%H:%i') AS st
+            FROM timetable_timeslot
+            ORDER BY FIELD(day_of_week,'MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY'),
+                     start_time
+        """)
+        ts_rows = cursor.fetchall()
+
+        # slot order
+        cursor.execute("""
+            SELECT slot_id, TIME_FORMAT(start_time,'%H:%i') AS st
+            FROM timetable_timeslot
+            ORDER BY FIELD(day_of_week,'MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY'),
+                     start_time
+        """)
+        slot_rows = cursor.fetchall()
+        slot_order = [int(r["slot_id"]) for r in slot_rows]
+
+        # periods/day and days
+        first_day = ts_rows[0]['day_of_week'] if ts_rows else None
+        periods_per_day = sum(1 for r in ts_rows if r['day_of_week'] == first_day) if first_day else 0
+        days = len({r['day_of_week'] for r in ts_rows})
+
+        # usable set
         cursor.execute("SHOW COLUMNS FROM timetable_timeslot LIKE 'is_usable'")
         has_is_usable = cursor.fetchone() is not None
-
-        cursor.execute("SELECT slot_id FROM timetable_timeslot ORDER BY slot_id")
-        all_slots_rows = cursor.fetchall()
-        all_slots = [int(r['slot_id']) for r in all_slots_rows]
-
-        periods_per_day = 7
-        days = 6
-        lunch_period_index = 4
-
         if has_is_usable:
-            cursor.execute("SELECT slot_id FROM timetable_timeslot WHERE is_usable = 1")
-            usable = set(int(r['slot_id']) for r in cursor.fetchall())
+            cursor.execute("SELECT slot_id FROM timetable_timeslot WHERE is_usable=1")
+            usable = {int(r['slot_id']) for r in cursor.fetchall()}
         else:
-            usable = set(all_slots)
-            lunch_slots = set()
-            for d in range(days):
-                base = d * periods_per_day
-                lunch_slots.add(base + lunch_period_index)
-            usable = usable - lunch_slots
+            usable = set(slot_order)  # all slots usable by default
 
+        # ----------------------------
+        # compute lunch window slots (10:50 - 13:55) across all days
+        # ----------------------------
+        # NOTE: times in DB are expected as HH:MM (24h). We compare lexicographically.
+        LUNCH_START = "10:50"
+        LUNCH_END = "13:55"
+        lunch_window_slots = set()
+        # we already fetched slot_rows with start times
+        for r in slot_rows:
+            st = r.get("st") or ""
+            try:
+                sid = int(r.get("slot_id"))
+            except Exception:
+                continue
+            if LUNCH_START <= st <= LUNCH_END:
+                lunch_window_slots.add(sid)
+
+        # ----------------------------
         # faculty unavailability
+        # ----------------------------
         cursor.execute("SHOW TABLES LIKE 'faculty_unavailability'")
         if cursor.fetchone():
             cursor.execute("SELECT faculty_id, slot_id FROM faculty_unavailability")
             fu_rows = cursor.fetchall()
             fac_unavail = {}
             for r in fu_rows:
-                fac_unavail.setdefault(int(r['faculty_id']), set()).add(int(r['slot_id']))
+                fid = int(r['faculty_id']); sid = int(r['slot_id'])
+                fac_unavail.setdefault(fid, set()).add(sid)
         else:
             fac_unavail = {}
 
         if not sections or not subjects or not rooms or not curriculum or not usable:
             return jsonify({"msg": "Error: Database is empty! Please add Curriculum, Rooms, and Time Slots first."}), 400
 
+        # ----------------------------
+        # GAInput — FINAL (include lunch_slots)
+        # ----------------------------
+        # NOTE: timetable_ga.models.GAInput must be updated to accept lunch_slots parameter (set of slot_ids)
         data = GAInput(
             sections=sections,
             subjects=subjects,
@@ -580,43 +658,45 @@ def generate_timetable():
             faculty_unavailability=fac_unavail,
             timeslots_usable=usable,
             periods_per_day=periods_per_day,
-            days=days
+            days=days,
+            slot_order=slot_order,
+            lunch_slots=lunch_window_slots,   # <-- pass lunch window to GA
         )
 
+        # ----------------------------
+        # Run GA
+        # ----------------------------
         print(f"--- Starting Genetic Timetable Algorithm ---")
+        # IMPORTANT: use parameters matching timetable_ga.run_ga(...) signature
         result = run_ga(
             data,
-            population_size=100,
-            generations=500,
+            population_size=80,
+            generations=300,
             tournament_k=3,
-            crossover_rate=0.9,
-            swap_rate=0.10,
-            perturb_rate=0.05,
-            elitism_fraction=0.05,
+            crossover_rate=0.9,   # use crossover_rate if your ga.py expects it
+            mutate_rate=0.05,     # rename/adjust to match your ga.py (mutate_rate used in latest ga.py)
+            elitism_fraction=0.08,
             seed=None
         )
+
         fitness = result["fitness"]
         eval_bd = result["eval"]
         best = result["best_chromosome"]
 
+        # encode rows to DB
         rows = chromosome_to_rows(best)
-        values = []
-        for r in rows:
-            values.append((
-                int(r["subject_id"]),
-                int(r["faculty_id"]),
-                int(r["room_id"]),
-                int(r["slot_id"]),
-                int(r["section_id"])
-            ))
+        values = [
+            (int(r["subject_id"]), int(r["faculty_id"]), int(r["room_id"]), int(r["slot_id"]), int(r["section_id"]))
+            for r in rows
+        ]
 
         save_cursor = conn.cursor()
         save_cursor.execute("DELETE FROM timetable_timetableentry")
 
         insert_query = """
-        INSERT INTO timetable_timetableentry 
-        (subject_id, faculty_id, classroom_id, time_slot_id, student_batch_id) 
-        VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO timetable_timetableentry 
+            (subject_id, faculty_id, classroom_id, time_slot_id, student_batch_id) 
+            VALUES (%s, %s, %s, %s, %s)
         """
         save_cursor.executemany(insert_query, values)
         conn.commit()
@@ -626,11 +706,13 @@ def generate_timetable():
             "msg": f"Timetable generated and saved! {len(values)} lectures scheduled.",
             "meta": {
                 "fitness": fitness,
-                "generations": result["generations"],
+                "generations": result.get("generations"),
                 "violations_found": sum(eval_bd.get("soft_breakdown", {}).values()) if eval_bd else None,
                 "hard_violations": eval_bd.get("hard_breakdown", {}) if eval_bd else {}
             },
-            "timetable_json": rows
+            "timetable_json": rows,
+            # optionally return the lunch window slots so frontend can show lunch cards
+            "lunch_slots": sorted(list(lunch_window_slots))
         }), 200
 
     except Error as e:
@@ -652,20 +734,16 @@ def generate_timetable():
 def update_subject(subject_id):
     auth_check = check_admin_access()
     if auth_check: return auth_check
-    
     data = request.get_json()
     if not data:
         return jsonify({"message": "Invalid JSON data"}), 400
-
     subject_name = data.get('subject_name')
     subject_code = data.get('subject_code')
     lecture_count = data.get('lecture_count')
     subj_type = (data.get('type') or 'THEORY').upper()
     contiguous_size = int(data.get('contiguous_block_size') or 1)
-
     if not all([subject_name, subject_code, lecture_count]):
         return jsonify({"message": "All fields are required"}), 400
-
     conn = None; cursor = None
     try:
         conn = get_db_connection()
@@ -677,10 +755,8 @@ def update_subject(subject_id):
         """
         cursor.execute(query, (subject_name, subject_code, int(lecture_count), subj_type, contiguous_size, subject_id))
         conn.commit()
-        
         if cursor.rowcount == 0:
             return jsonify({"status": "error", "message": "Subject not found"}), 404
-            
         return jsonify({"status": "success", "message": "Subject updated successfully"}), 200
     except Error as e:
         print(f"Update Subject Error: {e}")
@@ -694,26 +770,21 @@ def update_subject(subject_id):
 def delete_subject(subject_id):
     auth_check = check_admin_access()
     if auth_check: return auth_check
-
     conn = None; cursor = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
         cursor.execute("SELECT 1 FROM curriculum WHERE subject_id = %s", (subject_id,))
         if cursor.fetchone():
             return jsonify({
                 "status": "error", 
                 "message": "Cannot delete subject. It is already assigned to a section."
             }), 409
-
         query = "DELETE FROM timetable_subject WHERE subject_id = %s"
         cursor.execute(query, (subject_id,))
         conn.commit()
-        
         if cursor.rowcount == 0:
             return jsonify({"status": "error", "message": "Subject not found"}), 404
-            
         return jsonify({"status": "success", "message": "Subject deleted successfully"}), 200
     except Error as e:
         print(f"Delete Subject Error: {e}")
@@ -731,13 +802,11 @@ def get_timetable_data(dept_id, batch_id):
     claims = get_jwt()
     if claims.get('role') not in ['Admin', 'Faculty', 'Student']:
         return jsonify({"msg": "Authorization failed. Role not permitted."}), 403
-
     conn = None; cursor = None
     try:
         conn = get_db_connection()
         if conn is None:
             return jsonify({"error": "Database connection failed"}), 500
-
         cursor = conn.cursor(dictionary=True)
         sql_query = """
     SELECT
@@ -758,7 +827,6 @@ def get_timetable_data(dept_id, batch_id):
 """
         cursor.execute(sql_query, (dept_id, batch_id))
         return jsonify(cursor.fetchall()), 200
-
     except Error as e:
         print("--- DATABASE CONNECTION/QUERY ERROR ---")
         print(f"Error Details: {e}")

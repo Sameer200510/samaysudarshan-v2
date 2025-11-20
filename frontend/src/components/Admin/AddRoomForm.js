@@ -3,7 +3,7 @@ import { Card, CardContent, Typography, TextField, Button, Box, Alert, CircularP
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 import axiosInstance from '../../api/axiosInstance'; 
 
-const roomTypes = ['Lecture Hall', 'Computer Lab', 'Seminar Room', 'Specialized Lab'];
+const roomTypes = ['LT', 'Computer Lab', 'CR'];
 
 const AddRoomForm = () => {
     const [formData, setFormData] = useState({

@@ -1,8 +1,7 @@
-# timetable_ga/models.py
-from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, asdict, field
+from typing import Dict, List, Optional, Tuple, Set
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class Gene:
     # A single scheduled session (THEORY = 1 period, LAB = contiguous_block_size periods)
     section_id: int
@@ -27,8 +26,15 @@ class Gene:
 class Subject:
     subject_id: int
     lecture_count: int
-    subj_type: str            # 'THEORY' | 'LAB'
-    contiguous_block_size: int
+    subj_type: str = "THEORY"
+    contiguous_block_size: int = 1
+
+    def kind(self) -> str:
+        # Always return final LAB/THEORY
+        if (self.subj_type or "").upper() == "LAB":
+            return "LAB"
+        # fallback by block size
+        return "LAB" if (self.contiguous_block_size or 1) > 1 else "THEORY"
 
 @dataclass(slots=True)
 class Section:
@@ -50,13 +56,16 @@ class Faculty:
 # All input the GA needs (already in memory, app.py se load karke bhejo)
 @dataclass(slots=True)
 class GAInput:
-    sections: Dict[int, Section]
-    subjects: Dict[int, Subject]                      # subject_id -> Subject
-    curriculum: List[Tuple[int,int,int]]              # (section_id, subject_id, faculty_id)
-    rooms: Dict[int, Room]
-    faculty: Dict[int, Faculty]
-    faculty_unavailability: Dict[int, set]            # faculty_id -> set(slot_id)
-    timeslots_usable: set                             # set of slot_id usable (no lunch)
-    # Calendar params
+    sections: Dict[int, "Section"]
+    subjects: Dict[int, "Subject"]
+    curriculum: List[tuple]              # (section_id, subject_id, faculty_id)
+    rooms: Dict[int, "Room"]
+    faculty: Dict[int, "Faculty"]
+    faculty_unavailability: Dict[int, Set[int]]
+    timeslots_usable: Set[int]
     periods_per_day: int
     days: int
+    slot_order: List[int]
+
+    # NEW: lunch window slots (set of slot_id that fall into lunch window)
+    lunch_slots: Set[int] = field(default_factory=set)

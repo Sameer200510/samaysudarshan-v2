@@ -1,135 +1,173 @@
-import React, { useState } from 'react';
-import { Card, CardContent, Typography, TextField, Button, Box, Alert, CircularProgress, MenuItem } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
-import axiosInstance from '../../api/axiosInstance'; // Axios instance for API call
+// src/components/Admin/AddSubjectForm.js
+import React, { useState } from "react";
+import {
+  Card, CardContent, CardHeader, TextField, MenuItem,
+  FormControl, InputLabel, Select, Button, Stack, Alert, Box
+} from "@mui/material";
+import axiosInstance from "../../api/axiosInstance";
 
-// Dummy Data for Departments (Replace with actual data fetch from API if needed)
-const dummyDepartments = [
-    { id: 1, name: 'Computer Science' },
-    { id: 2, name: 'Electronics & Comm.' },
-    { id: 3, name: 'Mechanical Engineering' },
+const DEPARTMENTS = [
+  { id: "1", name: "Computer Science" },
+  { id: "2", name: "Electronics & Comm." },
 ];
 
-const AddSubjectForm = () => {
-    const [formData, setFormData] = useState({
-        subject_name: '',
-        subject_code: '',
-        department_id: '',
-        lecture_count: '', // Expected as a number
-    });
-    const [status, setStatus] = useState({ msg: null, severity: null, loading: false });
+export default function AddSubjectForm() {
+  const [form, setForm] = useState({
+    subject_name: "",
+    subject_code: "",
+    department_id: "",
+    lecture_count: "",
+    type: "THEORY",               // NEW: default THEORY
+    contiguous_block_size: 1,     // NEW: default 1; for LAB we'll switch to 2
+  });
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState({ type: "", text: "" });
 
-    const handleChange = (e) => {
-        const { name, value } = e.target;
-        setFormData({ ...formData, [name]: value });
+  const onChange = (e) => {
+    const { name, value } = e.target;
+    setForm((f) => ({ ...f, [name]: value }));
+  };
+
+  const onTypeChange = (e) => {
+    const value = e.target.value;
+    setForm((f) => ({
+      ...f,
+      type: value,
+      contiguous_block_size: value === "LAB" ? Math.max(2, Number(f.contiguous_block_size) || 2) : 1,
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setMsg({ type: "", text: "" });
+
+    // basic validation
+    if (!form.subject_name || !form.subject_code || !form.department_id || !form.lecture_count) {
+      setMsg({ type: "error", text: "Please fill all required fields." });
+      return;
+    }
+
+    // payload aligns with backend
+    const payload = {
+      subject_name: form.subject_name.trim(),
+      subject_code: form.subject_code.trim(),
+      department_id: form.department_id,
+      lecture_count: Number(form.lecture_count),
+      type: form.type, // THEORY or LAB
+      contiguous_block_size: form.type === "LAB" ? Number(form.contiguous_block_size || 2) : 1,
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setStatus({ msg: null, severity: null, loading: true });
+    try {
+      setLoading(true);
+      const { data } = await axiosInstance.post("/api/v1/add_subject", payload);
+      setMsg({ type: "success", text: data?.message || "Subject added successfully." });
+      // reset (keep department)
+      setForm((f) => ({
+        subject_name: "",
+        subject_code: "",
+        department_id: f.department_id,
+        lecture_count: "",
+        type: "THEORY",
+        contiguous_block_size: 1,
+      }));
+    } catch (err) {
+      const text =
+        err?.response?.data?.msg ||
+        err?.response?.data?.message ||
+        "Failed to add subject.";
+      setMsg({ type: "error", text });
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        // --- ENHANCED VALIDATION CHECK ---
-        if (!formData.subject_name || !formData.subject_code || !formData.department_id || !formData.lecture_count) {
-             setStatus({ msg: 'Subject Name, Code, Department, and Lecture Hours are required.', severity: 'error', loading: false });
-             return;
-        }
+  return (
+    <Card elevation={2}>
+      <CardHeader title="Add New Subject" />
+      <CardContent>
+        <Stack component="form" spacing={2} onSubmit={handleSubmit}>
+          {msg.text ? <Alert severity={msg.type}>{msg.text}</Alert> : null}
 
-        try {
-            // Route /api/v1/add_subject par post karega (jo app.py mein hai)
-            const response = await axiosInstance.post('/api/v1/add_subject', formData); 
-            
-            setStatus({ msg: response.data.message || 'Subject added successfully!', severity: 'success', loading: false });
-            setFormData({ subject_name: '', subject_code: '', department_id: '', lecture_count: '' }); // Clear form
+          <TextField
+            label="Subject Name *"
+            name="subject_name"
+            value={form.subject_name}
+            onChange={onChange}
+            fullWidth
+          />
 
-        } catch (error) {
-            const errorMsg = error.response?.data?.message || 'Failed to add subject. Check Flask console for DB errors.';
-            setStatus({ msg: errorMsg, severity: 'error', loading: false });
-        }
-    };
+          <TextField
+            label="Subject Code (e.g., CS101) *"
+            name="subject_code"
+            value={form.subject_code}
+            onChange={onChange}
+            fullWidth
+          />
 
-    return (
-        // Use Card for the elevated, contained form look
-        <Card elevation={4} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <CardContent>
-                <Typography variant="h6" component="h2" gutterBottom sx={{ fontWeight: '600' }}>
-                    <AddIcon sx={{ verticalAlign: 'middle', mr: 1 }} color="primary" /> 
-                    Add New Subject
-                </Typography>
-                
-                {status.msg && (
-                    <Alert severity={status.severity} sx={{ mb: 2 }}>
-                        {status.msg}
-                    </Alert>
-                )}
+          <FormControl fullWidth>
+            <InputLabel>Department *</InputLabel>
+            <Select
+              label="Department *"
+              name="department_id"
+              value={form.department_id}
+              onChange={onChange}
+            >
+              {DEPARTMENTS.map((d) => (
+                <MenuItem key={d.id} value={d.id}>{d.name} ({d.id})</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-                <Box component="form" onSubmit={handleSubmit} sx={{ mt: 2 }}>
-                    <TextField
-                        name="subject_name"
-                        label="Subject Name"
-                        fullWidth
-                        required
-                        variant="outlined"
-                        margin="normal"
-                        value={formData.subject_name}
-                        onChange={handleChange}
-                    />
-                    <TextField
-                        name="subject_code"
-                        label="Subject Code (e.g., CS101)"
-                        fullWidth
-                        required 
-                        variant="outlined"
-                        margin="normal"
-                        value={formData.subject_code}
-                        onChange={handleChange}
-                    />
-                    
-                    <TextField
-                        select
-                        name="department_id"
-                        label="Department"
-                        fullWidth
-                        required
-                        variant="outlined"
-                        margin="normal"
-                        value={formData.department_id}
-                        onChange={handleChange}
-                    >
-                        {dummyDepartments.map((option) => (
-                            <MenuItem key={option.id} value={option.id}>
-                                {option.name}
-                            </MenuItem>
-                        ))}
-                    </TextField>
+          <TextField
+            label="Lecture Hours / Week *"
+            name="lecture_count"
+            value={form.lecture_count}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, lecture_count: e.target.value.replace(/[^\d]/g, "") }))
+            }
+            fullWidth
+            inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
+          />
 
-                    <TextField
-                        name="lecture_count"
-                        label="Lecture Hours/Week"
-                        fullWidth
-                        type="number"
-                        required 
-                        variant="outlined"
-                        margin="normal"
-                        value={formData.lecture_count}
-                        onChange={handleChange}
-                        inputProps={{ min: 1 }}
-                    />
+          {/* NEW: Subject Type */}
+          <FormControl fullWidth>
+            <InputLabel>Subject Type *</InputLabel>
+            <Select
+              label="Subject Type *"
+              name="type"
+              value={form.type}
+              onChange={onTypeChange}
+            >
+              <MenuItem value="THEORY">THEORY</MenuItem>
+              <MenuItem value="LAB">LAB / PRACTICAL</MenuItem>
+            </Select>
+          </FormControl>
 
-                    <Button
-                        type="submit"
-                        fullWidth
-                        variant="contained"
-                        color="primary"
-                        disabled={status.loading}
-                        startIcon={status.loading ? <CircularProgress size={20} color="inherit" /> : <AddIcon />}
-                        sx={{ mt: 3, height: '48px' }}
-                    >
-                        {status.loading ? 'Adding Subject...' : 'Submit Subject'}
-                    </Button>
-                </Box>
-            </CardContent>
-        </Card>
-    );
-};
+          {/* NEW: Block size only when LAB */}
+          {form.type === "LAB" && (
+            <TextField
+              label="Contiguous Block Size (periods)"
+              name="contiguous_block_size"
+              value={form.contiguous_block_size}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  contiguous_block_size: e.target.value.replace(/[^\d]/g, ""),
+                }))
+              }
+              helperText="Typical labs need 2 or 3 consecutive periods."
+              fullWidth
+              inputProps={{ inputMode: "numeric", pattern: "[0-9]*", min: 2 }}
+            />
+          )}
 
-export default AddSubjectForm;
+          <Box>
+            <Button type="submit" variant="contained" disabled={loading}>
+              {loading ? "Submitting..." : "Submit Subject"}
+            </Button>
+          </Box>
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
