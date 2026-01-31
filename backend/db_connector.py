@@ -9,6 +9,7 @@ def get_db_connection():
             password=os.getenv("AVNS_GUiXbqyo_YnqCSAlh-x"),
             database=os.getenv("defaultdb"),
             port=int(os.getenv("20204")),
+            ssl_ca="aiven-ca.pem",
             ssl_disabled=False
         )
         print("✅ DB CONNECTED SUCCESSFULLY")
@@ -16,3 +17,5 @@ def get_db_connection():
     except Exception as e:
         print("❌ DB CONNECTION ERROR:", e)
         return None
+           
+           
