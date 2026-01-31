@@ -843,3 +843,15 @@ if __name__ == '__main__':
     print("✅ SamaySudarshan Flask API Server Started Successfully! ")
     print("--------------------------------G-V-2-Multi-Section-Ready")
     app.run(debug=True, port=5000)
+
+@app.route("/db-check")
+def db_check():
+    from db_connector import get_db_connection
+    conn = get_db_connection()
+    if not conn:
+        return {"status": "DB FAILED"}, 500
+
+    cur = conn.cursor()
+    cur.execute("SHOW TABLES;")
+    tables = [t[0] for t in cur.fetchall()]
+    return {"status": "OK", "tables": tables}
