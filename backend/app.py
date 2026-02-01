@@ -27,7 +27,12 @@ from timetable_ga import (
 # APP INIT
 # -------------------------
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "*"}},
+    supports_credentials=True
+)
+
 
 # Secrets (env var preferred)
 app.config['SECRET_KEY'] = os.environ.get('APP_SECRET_KEY', 'samaysudarshan_very_secret_key_123')
@@ -855,3 +860,11 @@ def db_check():
     cur.execute("SHOW TABLES;")
     tables = [t[0] for t in cur.fetchall()]
     return {"status": "OK", "tables": tables}
+
+
+@app.after_request
+def after_request(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    return response
