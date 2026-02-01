@@ -5,7 +5,7 @@ import { logout } from "../features/auth/authSlice";
 
 // 1️⃣ Axios instance (base config)
 const axiosInstance = axios.create({
-  baseURL: "http://127.0.0.1:5000", // Flask backend
+  baseURL: process.env.REACT_APP_API_URL, // Flask backend
   headers: {
     "Content-Type": "application/json",
   },
