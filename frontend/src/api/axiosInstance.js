@@ -5,20 +5,26 @@ import { logout } from "../features/auth/authSlice";
 
 // 1️⃣ Axios instance (base config)
 const axiosInstance = axios.create({
-  baseURL: process.env.REACT_APP_API_URL, // Flask backend
+  baseURL: "https://samaysudarshan-api.onrender.com", // Flask backend
   headers: {
     "Content-Type": "application/json",
   },
 });
 
 // 2️⃣ Request interceptor — har API call ke saath token lagana
-axiosInstance.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token && !config.url.endsWith('/login') && !config.url.endsWith('/register')) {
-    config.headers['Authorization'] = 'Bearer ' + token;
-  }
-  return config;
+axiosInstance.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem("token");
 
+    if (
+      token &&
+      !config.url.endsWith("/login") &&
+      !config.url.endsWith("/register")
+    ) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    return config;
   },
   (error) => Promise.reject(error)
 );
