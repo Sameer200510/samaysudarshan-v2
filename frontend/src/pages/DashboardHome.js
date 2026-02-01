@@ -1,7 +1,7 @@
 // src/pages/DashboardHome.js
 import React, { Suspense, lazy } from "react";
 // Added Box and Stack for cleaner alignment controls
-import { Typography, Box, Grid, Divider, Paper, Container, Stack } from "@mui/material";
+import { Typography, Box, Grid, Paper, Container, Stack } from "@mui/material";
 import { useSelector } from "react-redux";
 // Using fun, modern icons
 import SectionAddIcon from '@mui/icons-material/AddCircleOutline';
