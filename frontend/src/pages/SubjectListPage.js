@@ -14,7 +14,7 @@ import axiosInstance from '../api/axiosInstance';
 
 // Yeh component "Subject Management" page hai (CRUD)
 const SubjectListPage = () => {
-    const dispatch = useDispatch();
+    //const dispatch = useDispatch();
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(true);
     const [status, setStatus] = useState({ msg: null, severity: null });
